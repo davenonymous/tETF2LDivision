@@ -5,7 +5,7 @@
 #include <smlib>
 #include <regex>
 
-#define VERSION 		"0.0.1"
+#define VERSION 		"0.0.2"
 
 new Handle:g_hCvarEnabled = INVALID_HANDLE;
 new Handle:g_hCvarAnnounce = INVALID_HANDLE;
