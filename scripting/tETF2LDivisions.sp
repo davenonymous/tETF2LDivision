@@ -151,7 +151,7 @@ public Action:Command_ShowDivisions(client, args) {
 
 	if(args == 0) {
 		for (new iClient=1; iClient<=MaxClients;iClient++) {
-			if (IsClientInGame(iClient) && !IsFakeClient(iClient)) {
+			if (IsClientInGame(iClient) && !IsFakeClient(iClient) && g_hPlayerData[iClient] != INVALID_HANDLE) {
 				new String:msg[253];
 				GetAnnounceString(iClient, msg, sizeof(msg));
 
@@ -178,7 +178,7 @@ public Action:Command_ShowDivisions(client, args) {
 		// Apply to all targets
 		for (new i = 0; i < TargetCount; i++) {
 			new iClient = TargetList[i];
-			if (IsClientInGame(iClient) && !IsFakeClient(iClient)) {
+			if (IsClientInGame(iClient) && !IsFakeClient(iClient) && g_hPlayerData[iClient] != INVALID_HANDLE) {
 				new String:msg[253];
 				GetAnnounceString(iClient, msg, sizeof(msg));
 
