@@ -71,6 +71,7 @@ public OnPluginStart() {
 
 	// Provide a command for clients
 	RegConsoleCmd("sm_div", Command_ShowDivisions);
+	RegConsoleCmd("sm_divdetail", Command_ShowPlayerDetail);
 }
 
 public OnConfigsExecuted() {
@@ -94,6 +95,52 @@ public Cvar_Changed(Handle:convar, const String:oldValue[], const String:newValu
 			}
 		}
 	}
+}
+
+public Action:Command_ShowPlayerDetail(client, args) {
+	if(!g_bEnabled) {
+		ReplyToCommand(client, "tDivisions is disabled.");
+		return Plugin_Handled;
+	}
+
+	if(args == 0 || args > 1) {
+		ReplyToCommand(client, "No target specified. Usage: sm_divdetail <playername>");
+		return Plugin_Handled;
+	}
+
+	decl String:strTarget[32]; GetCmdArg(1, strTarget, sizeof(strTarget));
+
+	// Process the targets
+	decl String:strTargetName[MAX_TARGET_LENGTH];
+	decl TargetList[MAXPLAYERS], TargetCount;
+	decl bool:TargetTranslate;
+
+	if ((TargetCount = ProcessTargetString(strTarget, client, TargetList, MAXPLAYERS, COMMAND_FILTER_CONNECTED|COMMAND_FILTER_NO_MULTI,
+										   strTargetName, sizeof(strTargetName), TargetTranslate)) <= 0) {
+		return Plugin_Handled;
+	}
+
+	// Apply to all targets (this can only be one, but anyway...)
+	for (new i = 0; i < TargetCount; i++) {
+		new iClient = TargetList[i];
+
+		new String:sPlayerId[12];
+		GetTrieString(g_hPlayerData[iClient], "PlayerId", sPlayerId, sizeof(sPlayerId));
+
+		if(strlen(sPlayerId) <= 0) {
+			ReplyToCommand(client, "Sorry. The ETF2L user-id is unknown for '%s'", strTarget);
+			return Plugin_Handled;
+		}
+
+		new String:sURL[128];
+		Format(sURL, sizeof(sURL), "http://etf2l.org/forum/user/%s/", sPlayerId);
+
+		ShowMOTDPanel(client, "ETF2L Profile", sURL, MOTDPANEL_TYPE_URL);
+	}
+
+	return Plugin_Handled;
+
+
 }
 
 public Action:Command_ShowDivisions(client, args) {
@@ -159,7 +206,7 @@ public OnClientDisconnect(iClient) {
 }
 
 public UpdateClientData(iClient, const String:auth[]) {
-	LogMessage("Updating data for: %s", auth);
+	if(IsFakeClient(iClient))return;
 
 	new String:sFriendId[64];
 	AuthIDToFriendID(auth, sFriendId, sizeof(sFriendId));
@@ -279,11 +326,12 @@ public Handle:ReadPlayer(iClient, String:sWrongFile[]) {
 	new String:sTeamName[255];
 	new String:sDivision[32];
 	new String:sEvent[255];
-
+	new String:sPlayerId[12];
 
 	if(hPlayer != INVALID_HANDLE) {
 		bRegistered = true;
 
+		TinyXml_GetAttribute(hPlayer, "id", sPlayerId, sizeof(sPlayerId));
 		TinyXml_GetAttribute(hPlayer, "steamid", sSteamId, sizeof(sSteamId));
 
 		//Find DisplayName
@@ -354,6 +402,7 @@ public Handle:ReadPlayer(iClient, String:sWrongFile[]) {
 
 		hResult = CreateTrie();
 		SetTrieString(hResult, "SteamId", sSteamId);
+		SetTrieString(hResult, "PlayerId", sPlayerId);
 		SetTrieString(hResult, "DisplayName", sDisplayName);
 		SetTrieString(hResult, "TeamName", sTeamName);
 		SetTrieString(hResult, "Division", sDivision);
