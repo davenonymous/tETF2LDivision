@@ -233,7 +233,7 @@ public OnEtf2lDataReady(bool:bSuccess, Handle:hSocketData, any:iClient) {
 
 	g_hPlayerData[iClient] = ReadPlayer(iClient, sPath);
 
-	if(g_bAnnounce) {
+	if(g_bAnnounce && g_hPlayerData[iClient] != INVALID_HANDLE) {
 		AnnouncePlayerToAll(iClient);
 	}
 }
