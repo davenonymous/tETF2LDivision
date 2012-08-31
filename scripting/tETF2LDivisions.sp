@@ -5,7 +5,7 @@
 #include <smlib>
 #include <regex>
 
-#define VERSION 		"0.0.2"
+#define VERSION 		"0.0.3"
 
 new Handle:g_hCvarEnabled = INVALID_HANDLE;
 new Handle:g_hCvarAnnounce = INVALID_HANDLE;
@@ -54,7 +54,7 @@ public OnPluginStart() {
 	BuildPath(Path_SM, sPath, sizeof(sPath), "configs/etf2lcache/");
 
 	if(!DirExists(sPath)) {
-		CreateDirectory(sPath, 755);
+		CreateDirectory(sPath, 493);
 	}
 
 
