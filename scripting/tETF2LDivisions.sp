@@ -1,11 +1,11 @@
 #pragma semicolon 1
 #include <sourcemod>
 #include <tDownloadCache>
-#include <tinyxml>
 #include <smlib>
 #include <regex>
+#include <kvizzle>
 
-#define VERSION 		"0.0.3"
+#define VERSION 		"0.1.0"
 
 new Handle:g_hCvarEnabled = INVALID_HANDLE;
 new Handle:g_hCvarAnnounce = INVALID_HANDLE;
@@ -208,16 +208,17 @@ public OnClientDisconnect(iClient) {
 public UpdateClientData(iClient, const String:auth[]) {
 	if(IsFakeClient(iClient))return;
 
+	// This is probably not necessery anymore, just use the id directly?
 	new String:sFriendId[64];
 	AuthIDToFriendID(auth, sFriendId, sizeof(sFriendId));
 
 	new String:sPath[PLATFORM_MAX_PATH];
-	BuildPath(Path_SM, sPath, sizeof(sPath), "configs/etf2lcache/%s.xml", sFriendId);
+	BuildPath(Path_SM, sPath, sizeof(sPath), "configs/etf2lcache/%s.vdf", sFriendId);
 
-	new String:sWebPath[255] = "/feed/player/?steamid=";
-	StrCat(sWebPath, sizeof(sWebPath), auth);
+	new String:sWebPath[255];
+	Format(sWebPath, sizeof(sWebPath), "/player/%s/full.vdf", auth);
 
-	DC_UpdateFile(sPath, "etf2l.org", 80, sWebPath, g_iMaxAge, OnEtf2lDataReady, iClient);
+	DC_UpdateFile(sPath, "api.etf2l.org", 80, sWebPath, g_iMaxAge, OnEtf2lDataReady, iClient);
 }
 
 public OnEtf2lDataReady(bool:bSuccess, Handle:hSocketData, any:iClient) {
@@ -242,23 +243,27 @@ public OnEtf2lDataReady(bool:bSuccess, Handle:hSocketData, any:iClient) {
 public GetAnnounceString(iClient, String:msg[], maxlen) {
 	Format(msg, maxlen, "{T}%N{N}", iClient);
 
-	new bool:bRegistered = false;
-	new bool:bActive = false;
-	new String:sSteamId[32];
-	new String:sDisplayName[255];
-	new String:sTeamName[255];
-	new String:sDivision[32];
-	new String:sEvent[255];
+	if(g_hPlayerData[iClient] != INVALID_HANDLE) {
+		new String:sSteamId[32];
+		new String:sDisplayName[255];
+		new String:sTeamName[255];
+		new String:sDivision[32];
+		new String:sEvent[255];
 
-	GetTrieString(g_hPlayerData[iClient], "SteamId", sSteamId, sizeof(sSteamId));
-	GetTrieString(g_hPlayerData[iClient], "DisplayName", sDisplayName, sizeof(sDisplayName));
-	GetTrieString(g_hPlayerData[iClient], "TeamName", sTeamName, sizeof(sTeamName));
-	GetTrieString(g_hPlayerData[iClient], "Division", sDivision, sizeof(sDivision));
-	GetTrieString(g_hPlayerData[iClient], "Event", sEvent, sizeof(sEvent));
-	GetTrieValue(g_hPlayerData[iClient],  "Registered", bRegistered);
-	GetTrieValue(g_hPlayerData[iClient],  "Active", bActive);
+		GetTrieString(g_hPlayerData[iClient], "SteamId", sSteamId, sizeof(sSteamId));
+		GetTrieString(g_hPlayerData[iClient], "DisplayName", sDisplayName, sizeof(sDisplayName));
 
-	if(bRegistered) {
+		if(g_bShowHighlander) {
+			GetTrieString(g_hPlayerData[iClient], "9v9TeamName", sTeamName, sizeof(sTeamName));
+			GetTrieString(g_hPlayerData[iClient], "9v9Division", sDivision, sizeof(sDivision));
+			GetTrieString(g_hPlayerData[iClient], "9v9Event", sEvent, sizeof(sEvent));
+		} else {
+			GetTrieString(g_hPlayerData[iClient], "6v6TeamName", sTeamName, sizeof(sTeamName));
+			GetTrieString(g_hPlayerData[iClient], "6v6Division", sDivision, sizeof(sDivision));
+			GetTrieString(g_hPlayerData[iClient], "6v6Event", sEvent, sizeof(sEvent));
+		}
+
+
 		//Player is registered
 		Format(msg, maxlen, "%s {N}(%s){N}", msg, sDisplayName);
 
@@ -297,122 +302,98 @@ public AnnouncePlayerToAll(iClient) {
 	}
 }
 
-
-public Handle:ReadPlayer(iClient, String:sWrongFile[]) {
-	new Handle:hResult = INVALID_HANDLE;
-
-	new String:file[PLATFORM_MAX_PATH];
-	Format(file, sizeof(file), "./tf/%s", sWrongFile);
-
-	new Handle:hTxDoc = TinyXml_CreateDocument();
-	if(!TinyXml_LoadFile(hTxDoc, file)) {
-		LogError("Could not load file: %s", file);
-		CloseHandle(hTxDoc);
-		return hResult;
+public Handle:ReadPlayer(iClient, String:sPath[]) {
+	new Handle:hKV = KvizCreateFromFile("response", sPath);
+	if(hKV == INVALID_HANDLE) {
+		LogError("Could not parse keyvalues file '%s' for %N", sPath, iClient);
+		return INVALID_HANDLE;
 	}
 
-	new Handle:hRoot = TinyXml_RootElement(hTxDoc);
-	if(hRoot == INVALID_HANDLE) {
-		LogError("Document has no root element: %s", file);
-		return hResult;
+	new iETF2LId = KvizGetNum(hKV, -1, "player.id");
+	if(iETF2LId == -1) {
+		LogError("Player '%N' is not registered at ETF2L.", iClient);
+		KvizClose(hKV);
+		return INVALID_HANDLE;
 	}
 
-	new Handle:hPlayer = TinyXml_FirstChildElement(hRoot);
-
-	new bool:bRegistered = false;
-	new bool:bActive = false;
 	new String:sSteamId[32];
 	new String:sDisplayName[255];
-	new String:sTeamName[255];
-	new String:sDivision[32];
-	new String:sEvent[255];
-	new String:sPlayerId[12];
+	new String:sSixTeamName[255];
+	new String:sSixDivision[32];
+	new String:sSixEvent[255];
+	new String:sNineTeamName[255];
+	new String:sNineDivision[32];
+	new String:sNineEvent[255];
 
-	if(hPlayer != INVALID_HANDLE) {
-		bRegistered = true;
+	// Grab Player Details
+	KvizGetString(hKV, sDisplayName, sizeof(sDisplayName), "", "player.name");
+	KvizGetString(hKV, sSteamId, sizeof(sSteamId), "", "player.steam.id");
 
-		TinyXml_GetAttribute(hPlayer, "id", sPlayerId, sizeof(sPlayerId));
-		TinyXml_GetAttribute(hPlayer, "steamid", sSteamId, sizeof(sSteamId));
 
-		//Find DisplayName
-		new Handle:hDisplayName = TinyXml_FirstChildElement(hPlayer, "displayname");
-		if(hDisplayName != INVALID_HANDLE) {
-			TinyXml_GetText(hDisplayName, sDisplayName, sizeof(sDisplayName));
-			CloseHandle(hDisplayName);
-		} else {
-			LogMessage("Could not find <Displayname> Section");
-		}
+	// Find the highlander team
+	KvizJumpToKey(hKV, false, "player.teams:any-child.type:has-value(Highlander):parent");
+	// ... and grab the name
+	KvizGetString(hKV, sNineTeamName, sizeof(sNineTeamName), "", "name");
 
-		//Find Teams Section
-		new Handle:hTeams = TinyXml_FirstChildElement(hPlayer, "teams");
+	// Find the latest competition that team has participated ...
+	KvizJumpToKey(hKV, false, "competitions:last-child");
+	// ... and grab some details
+	KvizGetString(hKV, sNineDivision, sizeof(sNineDivision), "", "division.name");
+	new iNineTier = KvizGetNum(hKV, -1, "division.tier");
+	KvizGetString(hKV, sNineEvent, sizeof(sNineEvent), "", "competition");
+	KvizGoBack(hKV);
 
-		if(hTeams != INVALID_HANDLE) {
-			new Handle:hTeam = TinyXml_FirstChildElement(hTeams);
 
-			while(hTeam != INVALID_HANDLE) {
-				new String:sTeamType[255];
-				TinyXml_GetAttribute(hTeam, "type", sTeamType, sizeof(sTeamType));
+	// Find the 6v6 team
+	KvizJumpToKey(hKV, false, "player.teams:any-child.type:has-value(6on6):parent");
+	// ... and grab the name
+	KvizGetString(hKV, sSixTeamName, sizeof(sSixTeamName), "", "name");
 
-				if(StrEqual(sTeamType, g_bShowHighlander ? "Highlander" : "6on6")) {
-					TinyXml_GetAttribute(hTeam, "name", sTeamName, sizeof(sTeamName));
+	// Find the latest competition that team has participated ...
+	KvizJumpToKey(hKV, false, "competitions:last-child");
+	// ... and grab some details
+	KvizGetString(hKV, sSixDivision, sizeof(sSixDivision), "", "division.name");
+	new iSixTier = KvizGetNum(hKV, -1, "division.tier");
+	KvizGetString(hKV, sSixEvent, sizeof(sSixEvent), "", "competition");
 
-					new iLatestComp = 0;
-					new String:sTempDivision[16];
-					new Handle:hComp = TinyXml_FirstChildElement(hTeam);
-					while(hComp != INVALID_HANDLE) {
-						new String:sCompId[5];
-						TinyXml_GetAttribute(hComp, "id", sCompId, sizeof(sCompId));
-						new iCompId = StringToInt(sCompId);
 
-						if(iCompId > iLatestComp) {
-							if(TinyXml_GetAttribute(hComp, "division", sTempDivision, sizeof(sTempDivision)) > 0) {
-								iLatestComp = iCompId;
-								sDivision = sTempDivision;
-								bActive = true;
-								TinyXml_GetAttribute(hComp, "name", sEvent, sizeof(sEvent));
+	// Close the file
+	KvizGoBack(hKV);
+	KvizClose(hKV);
 
-								if(MatchRegex(g_hRegExSeason, sEvent) > 0) {
-									new String:sYear[4];
-									GetRegexSubString(g_hRegExSeason, 1, sYear, sizeof(sYear));
+	// Post-Processing: Strip the event name
+	if(MatchRegex(g_hRegExSeason, sSixEvent) > 0) {
+		new String:sYear[4];
+		GetRegexSubString(g_hRegExSeason, 1, sYear, sizeof(sYear));
 
-									Format(sEvent, sizeof(sEvent), "Season %s", sYear);
-								}
-							}
-						}
-
-						new Handle:hCompNext = TinyXml_NextSiblingElement(hComp);
-						CloseHandle(hComp);
-						hComp = hCompNext;
-					}
-
-					CloseHandle(hTeam);
-					break;
-				}
-
-				new Handle:hTeamNext = TinyXml_NextSiblingElement(hTeam);
-				CloseHandle(hTeam);
-				hTeam = hTeamNext;
-			}
-
-			CloseHandle(hTeams);
-		} else {
-			LogMessage("Could not find <Teams> Section");
-		}
-		CloseHandle(hPlayer);
-
-		hResult = CreateTrie();
-		SetTrieString(hResult, "SteamId", sSteamId);
-		SetTrieString(hResult, "PlayerId", sPlayerId);
-		SetTrieString(hResult, "DisplayName", sDisplayName);
-		SetTrieString(hResult, "TeamName", sTeamName);
-		SetTrieString(hResult, "Division", sDivision);
-		SetTrieString(hResult, "Event", sEvent);
-		SetTrieValue(hResult, "Registered", bRegistered);
-		SetTrieValue(hResult, "Active", bActive);
+		Format(sSixEvent, sizeof(sSixEvent), "Season %s", sYear);
 	}
 
-	CloseHandle(hRoot);
-	CloseHandle(hTxDoc);
+	if(MatchRegex(g_hRegExSeason, sNineEvent) > 0) {
+		new String:sYear[4];
+		GetRegexSubString(g_hRegExSeason, 1, sYear, sizeof(sYear));
+
+		Format(sNineEvent, sizeof(sNineEvent), "Season %s", sYear);
+	}
+
+	// Encapsulate in a Trie and return
+	new Handle:hResult = CreateTrie();
+	SetTrieString(hResult, "SteamId", sSteamId);
+	SetTrieString(hResult, "DisplayName", sDisplayName);
+
+	SetTrieString(hResult, "6v6TeamName", sSixTeamName);
+	SetTrieString(hResult, "6v6Division", sSixDivision);
+	SetTrieString(hResult, "6v6Event", sSixEvent);
+	SetTrieValue(hResult,  "6v6DivisionTier", iSixTier);
+
+	SetTrieString(hResult, "9v9TeamName", sNineTeamName);
+	SetTrieString(hResult, "9v9Division", sNineDivision);
+	SetTrieString(hResult, "9v9Event", sNineEvent);
+	SetTrieValue(hResult,  "9v9DivisionTier", iNineTier);
+
+	SetTrieValue(hResult, "PlayerId", iETF2LId);
+
+
 	return hResult;
 }
 
