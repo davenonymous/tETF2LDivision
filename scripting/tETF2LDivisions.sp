@@ -3,20 +3,20 @@
 #include <tDownloadCache>
 #include <smlib>
 #include <regex>
-#include <kvizzle>
 
-#define VERSION 		"0.1.0"
+#define VERSION 		"0.1.1b"
 
 new Handle:g_hCvarEnabled = INVALID_HANDLE;
 new Handle:g_hCvarAnnounce = INVALID_HANDLE;
 new Handle:g_hCvarAnnAdminOnly = INVALID_HANDLE;
-new Handle:g_hCvarShowHighlander = INVALID_HANDLE;
+new Handle:g_hCvarTeamType = INVALID_HANDLE;
 new Handle:g_hCvarMaxAge = INVALID_HANDLE;
 
 new bool:g_bEnabled;
 new bool:g_bAnnounce;
 new bool:g_bAnnounceAdminOnly;
-new bool:g_bShowHighlander;
+new String:g_sTeamType[64];
+
 new g_iMaxAge = 7 * (24 * 60 * 60);
 
 new Handle:g_hRegExSeason;
@@ -35,14 +35,14 @@ public OnPluginStart() {
 
 	// Create some convars
 	g_hCvarEnabled = CreateConVar("sm_tetf2ldivision_enable", "1", "Enable tETF2LDivision.", FCVAR_PLUGIN, true, 0.0, true, 1.0);
-	g_hCvarShowHighlander = CreateConVar("sm_tetf2ldivision_highlander", "0", "Show the highlander instead of the 6on6 team.", FCVAR_PLUGIN, true, 0.0, true, 1.0);
+	g_hCvarTeamType = CreateConVar("sm_tetf2ldivision_teamtype", "6on6", "The team type to show (6on6, Highlander, 2on2...).", FCVAR_PLUGIN);
 	g_hCvarAnnounce = CreateConVar("sm_tetf2ldivision_announce", "1", "Announce players on connect.", FCVAR_PLUGIN, true, 0.0, true, 1.0);
 	g_hCvarAnnAdminOnly = CreateConVar("sm_tetf2ldivision_announce_adminsonly", "0", "Announce players on connect to admins only.", FCVAR_PLUGIN, true, 0.0, true, 1.0);
 	g_hCvarMaxAge = CreateConVar("sm_tetf2ldivision_maxage", "7", "Update infos about all players every x-th day.", FCVAR_PLUGIN, true, 1.0, true, 31.0);
 	HookConVarChange(g_hCvarEnabled, Cvar_Changed);
 	HookConVarChange(g_hCvarAnnounce, Cvar_Changed);
 	HookConVarChange(g_hCvarAnnAdminOnly, Cvar_Changed);
-	HookConVarChange(g_hCvarShowHighlander, Cvar_Changed);
+	HookConVarChange(g_hCvarTeamType, Cvar_Changed);
 	HookConVarChange(g_hCvarMaxAge, Cvar_Changed);
 
 
@@ -78,7 +78,7 @@ public OnConfigsExecuted() {
 	g_bEnabled = GetConVarBool(g_hCvarEnabled);
 	g_bAnnounce = GetConVarBool(g_hCvarAnnounce);
 	g_bAnnounceAdminOnly = GetConVarBool(g_hCvarAnnAdminOnly);
-	g_bShowHighlander = GetConVarBool(g_hCvarShowHighlander);
+	GetConVarString(g_hCvarTeamType, g_sTeamType, sizeof(g_sTeamType));
 	g_iMaxAge = GetConVarInt(g_hCvarMaxAge) * (24 * 60 * 60);
 }
 
@@ -86,7 +86,7 @@ public Cvar_Changed(Handle:convar, const String:oldValue[], const String:newValu
 	OnConfigsExecuted();
 
 	// Reload data if plugin got enabled or the team-mode got switched
-	if((convar == g_hCvarEnabled && g_bEnabled) || convar == g_hCvarShowHighlander) {
+	if(convar == g_hCvarEnabled && g_bEnabled) {
 		for(new iClient = 1; iClient <= MaxClients; iClient++) {
 			if(IsClientInGame(iClient) && !IsFakeClient(iClient)) {
 				new String:sAuthId[32];
@@ -253,16 +253,15 @@ public GetAnnounceString(iClient, String:msg[], maxlen) {
 		GetTrieString(g_hPlayerData[iClient], "SteamId", sSteamId, sizeof(sSteamId));
 		GetTrieString(g_hPlayerData[iClient], "DisplayName", sDisplayName, sizeof(sDisplayName));
 
-		if(g_bShowHighlander) {
-			GetTrieString(g_hPlayerData[iClient], "9v9TeamName", sTeamName, sizeof(sTeamName));
-			GetTrieString(g_hPlayerData[iClient], "9v9Division", sDivision, sizeof(sDivision));
-			GetTrieString(g_hPlayerData[iClient], "9v9Event", sEvent, sizeof(sEvent));
-		} else {
-			GetTrieString(g_hPlayerData[iClient], "6v6TeamName", sTeamName, sizeof(sTeamName));
-			GetTrieString(g_hPlayerData[iClient], "6v6Division", sDivision, sizeof(sDivision));
-			GetTrieString(g_hPlayerData[iClient], "6v6Event", sEvent, sizeof(sEvent));
-		}
+		new String:sResultKey[255];
+		Format(sResultKey, sizeof(sResultKey), "team_%s", g_sTeamType);
 
+		new Handle:hTeamData = INVALID_HANDLE;
+		if(GetTrieValue(g_hPlayerData[iClient], sResultKey, hTeamData) && hTeamData != INVALID_HANDLE) {
+			GetTrieString(hTeamData, "TeamName", sTeamName, sizeof(sTeamName));
+			GetTrieString(hTeamData, "Division", sDivision, sizeof(sDivision));
+			GetTrieString(hTeamData, "Event", sEvent, sizeof(sEvent));
+		}
 
 		//Player is registered
 		Format(msg, maxlen, "%s {N}(%s){N}", msg, sDisplayName);
@@ -303,100 +302,114 @@ public AnnouncePlayerToAll(iClient) {
 }
 
 public Handle:ReadPlayer(iClient, String:sPath[]) {
-	new Handle:hKV = KvizCreateFromFile("response", sPath);
+	new Handle:hKV = CreateKeyValues("response");
+	FileToKeyValues(hKV, sPath);
+
 	if(hKV == INVALID_HANDLE) {
 		LogError("Could not parse keyvalues file '%s' for %N", sPath, iClient);
 		return INVALID_HANDLE;
 	}
 
-	new iETF2LId = KvizGetNum(hKV, -1, "player.id");
-	if(iETF2LId == -1) {
-		LogError("Player '%N' is not registered at ETF2L.", iClient);
-		KvizClose(hKV);
+	if(!KvJumpToKey(hKV, "player")) {
+		LogError("No player entry found for %N (%s)", iClient, sPath);
+		CloseHandle(hKV);
 		return INVALID_HANDLE;
 	}
 
-	new String:sSteamId[32];
-	new String:sDisplayName[255];
-	new String:sSixTeamName[255];
-	new String:sSixDivision[32];
-	new String:sSixEvent[255];
-	new String:sNineTeamName[255];
-	new String:sNineDivision[32];
-	new String:sNineEvent[255];
-
-	// Grab Player Details
-	KvizGetString(hKV, sDisplayName, sizeof(sDisplayName), "", "player.name");
-	KvizGetString(hKV, sSteamId, sizeof(sSteamId), "", "player.steam.id");
-
-
-	// Find the highlander team
-	KvizJumpToKey(hKV, false, "player.teams:any-child.type:has-value(Highlander):parent");
-	// ... and grab the name
-	KvizGetString(hKV, sNineTeamName, sizeof(sNineTeamName), "", "name");
-
-	// Find the latest competition that team has participated ...
-	KvizJumpToKey(hKV, false, "competitions:last-child");
-	// ... and grab some details
-	KvizGetString(hKV, sNineDivision, sizeof(sNineDivision), "", "division.name");
-	new iNineTier = KvizGetNum(hKV, -1, "division.tier");
-	KvizGetString(hKV, sNineEvent, sizeof(sNineEvent), "", "competition");
-	KvizGoBack(hKV);
-
-
-	// Find the 6v6 team
-	KvizJumpToKey(hKV, false, "player.teams:any-child.type:has-value(6on6):parent");
-	// ... and grab the name
-	KvizGetString(hKV, sSixTeamName, sizeof(sSixTeamName), "", "name");
-
-	// Find the latest competition that team has participated ...
-	KvizJumpToKey(hKV, false, "competitions:last-child");
-	// ... and grab some details
-	KvizGetString(hKV, sSixDivision, sizeof(sSixDivision), "", "division.name");
-	new iSixTier = KvizGetNum(hKV, -1, "division.tier");
-	KvizGetString(hKV, sSixEvent, sizeof(sSixEvent), "", "competition");
-
-
-	// Close the file
-	KvizGoBack(hKV);
-	KvizClose(hKV);
-
-	// Post-Processing: Strip the event name
-	if(MatchRegex(g_hRegExSeason, sSixEvent) > 0) {
-		new String:sYear[4];
-		GetRegexSubString(g_hRegExSeason, 1, sYear, sizeof(sYear));
-
-		Format(sSixEvent, sizeof(sSixEvent), "Season %s", sYear);
+	new iETF2LId = KvGetNum(hKV, "id", -1);
+	if(iETF2LId == -1) {
+		CloseHandle(hKV);
+		return INVALID_HANDLE;
 	}
 
-	if(MatchRegex(g_hRegExSeason, sNineEvent) > 0) {
-		new String:sYear[4];
-		GetRegexSubString(g_hRegExSeason, 1, sYear, sizeof(sYear));
-
-		Format(sNineEvent, sizeof(sNineEvent), "Season %s", sYear);
-	}
-
-	// Encapsulate in a Trie and return
+	// Start collecting data and save it in a trie
 	new Handle:hResult = CreateTrie();
-	SetTrieString(hResult, "SteamId", sSteamId);
-	SetTrieString(hResult, "DisplayName", sDisplayName);
-
-	SetTrieString(hResult, "6v6TeamName", sSixTeamName);
-	SetTrieString(hResult, "6v6Division", sSixDivision);
-	SetTrieString(hResult, "6v6Event", sSixEvent);
-	SetTrieValue(hResult,  "6v6DivisionTier", iSixTier);
-
-	SetTrieString(hResult, "9v9TeamName", sNineTeamName);
-	SetTrieString(hResult, "9v9Division", sNineDivision);
-	SetTrieString(hResult, "9v9Event", sNineEvent);
-	SetTrieValue(hResult,  "9v9DivisionTier", iNineTier);
-
 	SetTrieValue(hResult, "PlayerId", iETF2LId);
 
+	// Grab Player Details
+	new String:sDisplayName[255];
+	KvGetString(hKV, "name", sDisplayName, sizeof(sDisplayName), "");
+	SetTrieString(hResult, "DisplayName", sDisplayName);
+
+	new String:sSteamId[32];
+	if(KvJumpToKey(hKV, "steam")) {
+		KvGetString(hKV, "id", sSteamId, sizeof(sSteamId), "");
+		KvGoBack(hKV);
+	}
+	SetTrieString(hResult, "SteamId", sSteamId);
+
+
+	// Loop over all teams
+	if(KvJumpToKey(hKV, "teams")) {
+		if(KvGotoFirstSubKey(hKV, false)) {
+			do {
+				new String:sTeamType[32];
+				KvGetString(hKV, "type", sTeamType, sizeof(sTeamType), "");
+
+				new String:sTeamName[255];
+				KvGetString(hKV, "name", sTeamName, sizeof(sTeamName), "");
+
+				new String:sEvent[255];
+				new String:sDivision[255];
+				if(KvJumpToKey(hKV, "competitions")) {
+					// Find the competition with the highest Id
+					if(KvGotoFirstSubKey(hKV, false)) {
+						new iHighestCompetitionId = -1;
+						do {
+							new String:sCompetitionId[8];
+							KvGetSectionName(hKV, sCompetitionId, sizeof(sCompetitionId));
+
+							new iCompetitionId = StringToInt(sCompetitionId);
+							if(iCompetitionId > iHighestCompetitionId) {
+								iHighestCompetitionId = iCompetitionId;
+
+								KvGetString(hKV, "competition", sEvent, sizeof(sEvent));
+
+								if(KvJumpToKey(hKV, "division")) {
+									KvGetString(hKV, "name", sDivision, sizeof(sDivision));
+
+									KvGoBack(hKV);
+								}
+							}
+						} while(KvGotoNextKey(hKV, false));
+
+						KvGoBack(hKV);
+					}
+
+					KvGoBack(hKV);
+				}
+
+				// Post-Processing: Strip the event name
+				if(MatchRegex(g_hRegExSeason, sEvent) > 0) {
+					new String:sYear[4];
+					GetRegexSubString(g_hRegExSeason, 1, sYear, sizeof(sYear));
+
+					Format(sEvent, sizeof(sEvent), "Season %s", sYear);
+				}
+
+				// Store in trie and append to result trie
+				new Handle:hTeamData = CreateTrie();
+				SetTrieString(hTeamData, "TeamName", sTeamName);
+				SetTrieString(hTeamData, "Division", sDivision);
+				SetTrieString(hTeamData, "Event", sEvent);
+
+				new String:sResultKey[255];
+				Format(sResultKey, sizeof(sResultKey), "team_%s", sTeamType);
+
+				SetTrieValue(hResult, sResultKey, hTeamData);
+
+			} while(KvGotoNextKey(hKV, false));
+
+			KvGoBack(hKV);
+		}
+
+		KvGoBack(hKV);
+	}
+
+	CloseHandle(hKV);
 
 	return hResult;
 }
-
 
 AuthIDToFriendID(const String:AuthID[], String:FriendID[], size) {
 	decl String:sAuthId[32];
