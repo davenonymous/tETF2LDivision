@@ -11,9 +11,11 @@ new Handle:g_hCvarAnnounce = INVALID_HANDLE;
 new Handle:g_hCvarAnnAdminOnly = INVALID_HANDLE;
 new Handle:g_hCvarTeamType = INVALID_HANDLE;
 new Handle:g_hCvarMaxAge = INVALID_HANDLE;
+new Handle:g_hCvarSeasonsOnly = INVALID_HANDLE;
 
 new bool:g_bEnabled;
 new bool:g_bAnnounce;
+new bool:g_bSeasonsOnly;
 new bool:g_bAnnounceAdminOnly;
 new String:g_sTeamType[64];
 
@@ -37,11 +39,13 @@ public OnPluginStart() {
 	g_hCvarEnabled = CreateConVar("sm_tetf2ldivision_enable", "1", "Enable tETF2LDivision.", FCVAR_PLUGIN, true, 0.0, true, 1.0);
 	g_hCvarTeamType = CreateConVar("sm_tetf2ldivision_teamtype", "6on6", "The team type to show (6on6, Highlander, 2on2...).", FCVAR_PLUGIN);
 	g_hCvarAnnounce = CreateConVar("sm_tetf2ldivision_announce", "1", "Announce players on connect.", FCVAR_PLUGIN, true, 0.0, true, 1.0);
+	g_hCvarSeasonsOnly = CreateConVar("sm_tetf2ldivision_seasonsonly", "1", "Ignore placements in fun cups etc.", FCVAR_PLUGIN, true, 0.0, true, 1.0);
 	g_hCvarAnnAdminOnly = CreateConVar("sm_tetf2ldivision_announce_adminsonly", "0", "Announce players on connect to admins only.", FCVAR_PLUGIN, true, 0.0, true, 1.0);
 	g_hCvarMaxAge = CreateConVar("sm_tetf2ldivision_maxage", "7", "Update infos about all players every x-th day.", FCVAR_PLUGIN, true, 1.0, true, 31.0);
 	HookConVarChange(g_hCvarEnabled, Cvar_Changed);
 	HookConVarChange(g_hCvarAnnounce, Cvar_Changed);
 	HookConVarChange(g_hCvarAnnAdminOnly, Cvar_Changed);
+	HookConVarChange(g_hCvarSeasonsOnly, Cvar_Changed);
 	HookConVarChange(g_hCvarTeamType, Cvar_Changed);
 	HookConVarChange(g_hCvarMaxAge, Cvar_Changed);
 
@@ -78,6 +82,7 @@ public OnConfigsExecuted() {
 	g_bEnabled = GetConVarBool(g_hCvarEnabled);
 	g_bAnnounce = GetConVarBool(g_hCvarAnnounce);
 	g_bAnnounceAdminOnly = GetConVarBool(g_hCvarAnnAdminOnly);
+	g_bSeasonsOnly = GetConVarBool(g_hCvarSeasonsOnly);
 	GetConVarString(g_hCvarTeamType, g_sTeamType, sizeof(g_sTeamType));
 	g_iMaxAge = GetConVarInt(g_hCvarMaxAge) * (24 * 60 * 60);
 }
@@ -358,6 +363,14 @@ public Handle:ReadPlayer(iClient, String:sPath[]) {
 						do {
 							new String:sCompetitionId[8];
 							KvGetSectionName(hKV, sCompetitionId, sizeof(sCompetitionId));
+
+							// Filter by category if only season should be shown
+							new String:sCategory[64];
+							KvGetString(hKV, "category", sCategory, sizeof(sCategory), "");
+
+							if(g_bSeasonsOnly && !StrContains(sCategory, "Season", false)) {
+								continue;
+							}
 
 							new iCompetitionId = StringToInt(sCompetitionId);
 							if(iCompetitionId > iHighestCompetitionId) {
