@@ -4,7 +4,7 @@
 #include <smlib>
 #include <regex>
 
-#define VERSION 		"0.1.1b"
+#define VERSION 		"0.1.2"
 
 new Handle:g_hCvarEnabled = INVALID_HANDLE;
 new Handle:g_hCvarAnnounce = INVALID_HANDLE;
@@ -61,18 +61,6 @@ public OnPluginStart() {
 		CreateDirectory(sPath, 493);
 	}
 
-
-	// Account for late loading
-	// - This triggers announcements. But that shouldn't be a big deal,
-	//   so we don't handle it and overcomplicate things by doing so.
-	for(new iClient = 1; iClient <= MaxClients; iClient++) {
-		if(IsClientInGame(iClient) && !IsFakeClient(iClient)) {
-			new String:sAuthId[32];
-			GetClientAuthString(iClient, sAuthId, sizeof(sAuthId));
-			UpdateClientData(iClient, sAuthId);
-		}
-	}
-
 	// Provide a command for clients
 	RegConsoleCmd("sm_div", Command_ShowDivisions);
 	RegConsoleCmd("sm_divdetail", Command_ShowPlayerDetail);
@@ -85,21 +73,21 @@ public OnConfigsExecuted() {
 	g_bSeasonsOnly = GetConVarBool(g_hCvarSeasonsOnly);
 	GetConVarString(g_hCvarTeamType, g_sTeamType, sizeof(g_sTeamType));
 	g_iMaxAge = GetConVarInt(g_hCvarMaxAge) * (24 * 60 * 60);
+
+	// Account for late loading
+	// - This triggers announcements. But that shouldn't be a big deal,
+	//   so we don't handle it and overcomplicate things by doing so.
+	for(new iClient = 1; iClient <= MaxClients; iClient++) {
+		if(IsClientInGame(iClient) && !IsFakeClient(iClient)) {
+			new String:sAuthId[32];
+			GetClientAuthString(iClient, sAuthId, sizeof(sAuthId));
+			UpdateClientData(iClient, sAuthId);
+		}
+	}
 }
 
 public Cvar_Changed(Handle:convar, const String:oldValue[], const String:newValue[]) {
 	OnConfigsExecuted();
-
-	// Reload data if plugin got enabled or the team-mode got switched
-	if(convar == g_hCvarEnabled && g_bEnabled) {
-		for(new iClient = 1; iClient <= MaxClients; iClient++) {
-			if(IsClientInGame(iClient) && !IsFakeClient(iClient)) {
-				new String:sAuthId[32];
-				GetClientAuthString(iClient, sAuthId, sizeof(sAuthId));
-				UpdateClientData(iClient, sAuthId);
-			}
-		}
-	}
 }
 
 public Action:Command_ShowPlayerDetail(client, args) {
@@ -367,8 +355,7 @@ public Handle:ReadPlayer(iClient, String:sPath[]) {
 							// Filter by category if only season should be shown
 							new String:sCategory[64];
 							KvGetString(hKV, "category", sCategory, sizeof(sCategory), "");
-
-							if(g_bSeasonsOnly && !StrContains(sCategory, "Season", false)) {
+							if(g_bSeasonsOnly && StrContains(sCategory, "Season", false) == -1) {
 								continue;
 							}
 
